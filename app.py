@@ -1,150 +1,183 @@
 import streamlit as st
-import google.generativeai as genai
-import time
+import requests
+import json
 
 # --- Configuração da Página ---
 st.set_page_config(
-    page_title="Decodificador de Gírias 🧐",
-    page_icon="🧐",
+    page_title="Gerador de Conceito de Marca 💡",
+    page_icon="💡",
     layout="centered",
 )
 
-# --- Chamada da API e Configuração do Modelo ---
+# --- Funções da API ---
 
-# Função para carregar o modelo de forma segura
-# O @st.cache_resource garante que o modelo seja carregado apenas uma vez.
-@st.cache_resource
-def load_model():
+def get_api_key():
     """
-    Carrega o modelo generativo do Gemini.
-    Levanta uma exceção se a API key não estiver configurada nos secrets do Streamlit.
+    Verifica e retorna a API key dos secrets do Streamlit.
+    Para a execução se a chave não for encontrada.
     """
     if "GOOGLE_API_KEY" not in st.secrets:
         st.error("Erro: GOOGLE_API_KEY não encontrada nos secrets do Streamlit.")
         st.caption("Por favor, adicione sua chave da API do Google AI Studio aos 'Secrets' do seu app no Streamlit Community Cloud.")
-        st.stop() # Para a execução se a chave não estiver presente
+        st.stop()
+    return st.secrets["GOOGLE_API_KEY"]
 
-    try:
-        genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-        
-        # Mantemos a configuração de segurança mais permissiva
-        safety_settings = [
+def generate_brand_text(produto, vibe, api_key):
+    """
+    Chama a API do Gemini 2.5 Flash para gerar Nome, Slogan e Descrição.
+    """
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key={api_key}"
+    
+    prompt = f"""
+    Você é um especialista em branding de classe mundial. Sua tarefa é criar um conceito de marca para um novo produto.
+
+    **Produto/Serviço:** "{produto}"
+    **Vibe/Estilo da Marca:** "{vibe}"
+
+    **Gere o seguinte conteúdo:**
+    1.  **Nome da Marca:** (Um nome curto e memorável)
+    2.  **Slogan:** (Uma frase de efeito curta)
+    3.  **Descrição de Marketing:** (Um parágrafo (3-4 frases) descrevendo a marca e atraindo clientes)
+    
+    Responda em Markdown.
+    """
+    
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        # Vamos manter as configurações de segurança permissivas
+        "safetySettings": [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
         ]
+    }
+    
+    headers = {'Content-Type': 'application/json'}
+
+    try:
+        response = requests.post(url, headers=headers, data=json.dumps(payload))
+        response.raise_for_status() # Lança um erro para respostas HTTP ruins (ex: 404, 500)
         
-        # Configurações de geração (criatividade vs. precisão)
-        generation_config = {
-            "temperature": 0.7,
-            "top_p": 1,
-            "top_k": 1,
-            "max_output_tokens": 512,
-        }
+        data = response.json()
         
-        model = genai.GenerativeModel(
-            model_name="gemini-2.5-flash-preview-09-2025",
-            generation_config=generation_config,
-            safety_settings=safety_settings
-        )
-        return model
+        # Verificação de segurança (finish_reason)
+        if "candidates" not in data or not data["candidates"]:
+            st.error("A API não retornou candidatos. Verifique o log do app no Streamlit.")
+            return None
+        
+        if data["candidates"][0].get("finishReason") == "SAFETY":
+            st.error("A resposta foi bloqueada pelo filtro de segurança da IA. Tente um prompt diferente.")
+            return None
+
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+        
+    except requests.exceptions.RequestException as e:
+        st.error(f"Erro de rede ou HTTP ao chamar a API de texto: {e}")
+        return None
+    except KeyError:
+        st.error("Resposta da API de texto em formato inesperado. Verifique os logs.")
+        return None
     except Exception as e:
-        st.error(f"Erro ao inicializar o modelo: {e}")
-        st.stop()
+        st.error(f"Um erro inesperado ocorreu (texto): {e}")
+        return None
 
-# --- Construtor do Prompt ---
-def build_prompt(giria, publico_alvo):
+def generate_logo_image(produto, vibe, api_key):
     """
-    Cria o prompt formatado para enviar ao modelo Gemini.
+    Chama a API do Imagen 4.0 para gerar um conceito de logo.
     """
-    # Persona do LLM
-    prompt = f"""
-    Você é o "Decodificador de Gírias", um especialista em cultura da internet e linguística moderna. 
-    Sua tarefa é explicar uma gíria de forma clara, concisa e adaptada ao público-alvo.
-
-    **Gíria a ser explicada:** "{giria}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key={api_key}"
     
-    **Público-alvo da explicação:** "{publico_alvo}"
+    # Prompt otimizado para geração de logo
+    logo_prompt = f"Um logo vetorial profissional, design limpo, {vibe}, para uma marca de '{produto}'. Fundo branco."
 
-    **Formato da Resposta (Obrigatório):**
-    1.  **Definição:** Comece com uma definição direta (O que significa?).
-    2.  **Origem/Contexto:** (Se souber) Explique brevemente de onde veio (jogo, rede social, etc.).
-    3.  **Exemplo de Uso:** Dê 1 ou 2 frases de exemplo.
+    payload = {
+        "instances": [{"prompt": logo_prompt}],
+        "parameters": {"sampleCount": 1}
+    }
     
-    Adapte o tom da explicação para o público-alvo solicitado.
-    """
-    return prompt
+    headers = {'Content-Type': 'application/json'}
+
+    try:
+        response = requests.post(url, headers=headers, data=json.dumps(payload))
+        response.raise_for_status()
+        
+        data = response.json()
+        
+        if "predictions" not in data or not data["predictions"]:
+            st.error("A API de imagem não retornou predições.")
+            return None
+
+        # Retorna a imagem em base64
+        return data["predictions"][0]["bytesBase64Encoded"]
+        
+    except requests.exceptions.RequestException as e:
+        st.error(f"Erro de rede ou HTTP ao chamar a API de imagem: {e}")
+        return None
+    except KeyError:
+        st.error("Resposta da API de imagem em formato inesperado. Verifique os logs.")
+        return None
+    except Exception as e:
+        st.error(f"Um erro inesperado ocorreu (imagem): {e}")
+        return None
 
 # --- Interface do Streamlit (UI) ---
 
-# Carrega o modelo
-try:
-    model = load_model()
-except Exception as e:
-    st.error(f"Não foi possível carregar a aplicação. Erro: {e}")
-    st.stop()
+st.title("Gerador de Conceito de Marca 💡")
+st.markdown("Descreva seu produto e nós criamos o nome, slogan, descrição e até um conceito de logo!")
 
-
-# Título e Subtítulo
-st.title("Decodificador de Gírias 🧐")
-st.markdown("Não entendeu o que o 'cria' falou? Ou o que significa 'rizz'? Deixa que eu traduzo!")
+# Pega a API Key (e para se não existir)
+api_key = get_api_key()
 
 # --- Formulário de Inputs ---
-with st.form("giria_form"):
-    giria_input = st.text_input(
-        "Qual gíria você quer entender?",
-        placeholder="Ex: tankar, cringe, 'meter o shape', rizz..."
+with st.form("brand_form"):
+    produto_input = st.text_input(
+        "Qual é o seu produto ou serviço?",
+        placeholder="Ex: Café artesanal, App de meditação, Pizzaria..."
     )
     
-    publico_alvo_input = st.selectbox(
-        "Como você quer a explicação?",
+    vibe_input = st.selectbox(
+        "Qual é a 'vibe' ou estilo da marca?",
         [
-            "Para meus pais (bem simples e didático)",
-            "Para um colega de trabalho (tom casual, mas profissional)",
-            "Para um amigo (descontraído)",
-            "Técnica (etimologia e contexto cultural)"
+            "Moderno e Minimalista",
+            "Rústico e Aconchegante",
+            "Divertido e Jovem",
+            "Elegante e Premium",
+            "Tecnológico e Inovador"
         ]
     )
     
-    submitted = st.form_submit_button("Decodificar!")
+    submitted = st.form_submit_button("Gerar Conceito!")
 
 # --- Lógica de Execução ---
 if submitted:
-    if not giria_input:
-        st.warning("Por favor, digite uma gíria para decodificar.")
+    if not produto_input:
+        st.warning("Por favor, descreva seu produto ou serviço.")
     else:
-        # 1. Construir o prompt
-        prompt_final = build_prompt(giria_input, publico_alvo_input)
+        # 1. Gerar o Texto
+        with st.spinner(f"Criando o conceito de marca para '{produto_input}'... ✍️"):
+            text_result = generate_brand_text(produto_input, vibe_input, api_key)
         
-        # 2. Chamar a API com spinner (indicador de carregamento)
-        with st.spinner(f"Decodificando '{giria_input}'... 🧠"):
-            try:
-                # 3. Gerar a resposta
-                response = model.generate_content(prompt_final)
-                
-                # 4. Mostrar a resposta
+        if text_result:
+            st.divider()
+            st.subheader("Aqui está sua Ideia de Marca:")
+            st.markdown(text_result)
+            
+            # 2. Gerar a Imagem (Logo)
+            with st.spinner(f"Desenhando um logo com vibe '{vibe_input}'... 🎨"):
+                image_b64 = generate_logo_image(produto_input, vibe_input, api_key)
+            
+            if image_b64:
                 st.divider()
-                st.subheader(f"Aqui está a decodificação de '{giria_input}':")
-
-                # --- NOSSO NOVO BLOCO DE VERIFICAÇÃO ---
-                # Verificamos se a resposta TEM conteúdo ANTES de tentar exibi-la
-                if response.parts:
-                    st.markdown(response.text)
-                else:
-                    # A resposta está vazia, vamos verificar o motivo
-                    finish_reason = response.candidates[0].finish_reason if response.candidates else None
-                    if finish_reason == 2: # 2 = SAFETY
-                        st.error("A API do Google bloqueou a resposta para esta gíria.")
-                        st.info("Isso acontece porque o filtro de segurança da IA (mesmo no nível mais baixo) é muito cauteloso com gírias e expressões regionais. Por favor, tente um termo diferente.")
-                    else:
-                        st.error(f"A IA não retornou uma resposta. (Motivo: {finish_reason})")
-                # --- FIM DO NOVO BLOCO ---
-                
-            except Exception as e:
-                # Captura outros erros (ex: falha de rede)
-                st.error(f"Houve um problema ao contatar a IA: {e}")
-                st.caption("Isso pode ser um problema temporário na API. Tente novamente em alguns segundos.")
+                st.subheader("Conceito de Logo:")
+                st.image(
+                    f"data:image/png;base64,{image_b64}",
+                    caption=f"Logo conceitual para {produto_input}"
+                )
+            else:
+                st.error("Não foi possível gerar o conceito de logo.")
+        else:
+            st.error("Não foi possível gerar o conceito da marca.")
 
 st.divider()
-st.caption("Um projeto de exemplo construído com Python, Streamlit e a API do Gemini.")
+st.caption("Um projeto de exemplo com Python, Streamlit, Gemini (texto) e Imagen (imagem).")
