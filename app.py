@@ -27,7 +27,7 @@ def load_model():
     try:
         genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
         
-        # Configurações de segurança para o modelo
+        # Mantemos a configuração de segurança mais permissiva
         safety_settings = [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -83,8 +83,6 @@ try:
     model = load_model()
 except Exception as e:
     st.error(f"Não foi possível carregar a aplicação. Erro: {e}")
-    # Se o load_model() falhar (ex: API key), ele já terá mostrado o erro,
-    # mas garantimos que a UI não tente ser renderizada.
     st.stop()
 
 
@@ -128,9 +126,23 @@ if submitted:
                 # 4. Mostrar a resposta
                 st.divider()
                 st.subheader(f"Aqui está a decodificação de '{giria_input}':")
-                st.markdown(response.text)
+
+                # --- NOSSO NOVO BLOCO DE VERIFICAÇÃO ---
+                # Verificamos se a resposta TEM conteúdo ANTES de tentar exibi-la
+                if response.parts:
+                    st.markdown(response.text)
+                else:
+                    # A resposta está vazia, vamos verificar o motivo
+                    finish_reason = response.candidates[0].finish_reason if response.candidates else None
+                    if finish_reason == 2: # 2 = SAFETY
+                        st.error("A API do Google bloqueou a resposta para esta gíria.")
+                        st.info("Isso acontece porque o filtro de segurança da IA (mesmo no nível mais baixo) é muito cauteloso com gírias e expressões regionais. Por favor, tente um termo diferente.")
+                    else:
+                        st.error(f"A IA não retornou uma resposta. (Motivo: {finish_reason})")
+                # --- FIM DO NOVO BLOCO ---
                 
             except Exception as e:
+                # Captura outros erros (ex: falha de rede)
                 st.error(f"Houve um problema ao contatar a IA: {e}")
                 st.caption("Isso pode ser um problema temporário na API. Tente novamente em alguns segundos.")
 
