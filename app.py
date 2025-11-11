@@ -44,7 +44,6 @@ def generate_brand_text(produto, vibe, api_key):
     
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        # Vamos manter as configurações de segurança permissivas
         "safetySettings": [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -57,12 +56,14 @@ def generate_brand_text(produto, vibe, api_key):
 
     try:
         response = requests.post(url, headers=headers, data=json.dumps(payload))
-        response.raise_for_status() # Lança um erro para respostas HTTP ruins (ex: 404, 500)
+        response.raise_for_status() 
         
         data = response.json()
         
-        # Verificação de segurança (finish_reason)
         if "candidates" not in data or not data["candidates"]:
+            if "promptFeedback" in data:
+                 st.error(f"A API bloqueou o prompt. Razão: {data['promptFeedback'].get('blockReason')}")
+                 return None
             st.error("A API não retornou candidatos. Verifique o log do app no Streamlit.")
             return None
         
@@ -73,7 +74,12 @@ def generate_brand_text(produto, vibe, api_key):
         return data["candidates"][0]["content"]["parts"][0]["text"]
         
     except requests.exceptions.RequestException as e:
-        st.error(f"Erro de rede ou HTTP ao chamar a API de texto: {e}")
+        # **MELHORIA:** Detetar especificamente o erro 429 (Too Many Requests)
+        if e.response is not None and e.response.status_code == 429:
+            st.error("Erro: Muitas requisições enviadas à API de texto.")
+            st.warning("Por favor, aguarde alguns minutos antes de tentar novamente.")
+        else:
+            st.error(f"Erro de rede ou HTTP ao chamar a API de texto: {e}")
         return None
     except KeyError:
         st.error("Resposta da API de texto em formato inesperado. Verifique os logs.")
@@ -85,9 +91,7 @@ def generate_brand_text(produto, vibe, api_key):
 def generate_logo_image(produto, vibe, api_key):
     """
     Chama a API do Gemini 2.5 Flash Image Preview para gerar um conceito de logo.
-    Esta função foi MODIFICADA para usar um modelo compatível com a API do AI Studio.
     """
-    # Usamos o endpoint generateContent do modelo de imagem
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key={api_key}"
     
     logo_prompt = f"Um logo vetorial profissional, design limpo, {vibe}, para uma marca de '{produto}'. Fundo branco."
@@ -97,9 +101,8 @@ def generate_logo_image(produto, vibe, api_key):
             "parts": [{"text": logo_prompt}]
         }],
         "generationConfig": {
-            "responseModalities": ['IMAGE'] # Pedimos uma imagem como resposta
+            "responseModalities": ['IMAGE']
         },
-        # Mantemos as configurações de segurança permissivas
         "safetySettings": [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -116,17 +119,17 @@ def generate_logo_image(produto, vibe, api_key):
         
         data = response.json()
 
-        # A estrutura da resposta é diferente
         if "candidates" not in data or not data["candidates"]:
+            if "promptFeedback" in data:
+                 st.error(f"A API de imagem bloqueou o prompt. Razão: {data['promptFeedback'].get('blockReason')}")
+                 return None
             st.error("A API de imagem não retornou candidatos.")
             return None
 
-        # Verificação de segurança
         if data["candidates"][0].get("finishReason") == "SAFETY":
             st.error("A resposta da imagem foi bloqueada pelo filtro de segurança da IA. Tente um prompt diferente.")
             return None
         
-        # Encontrar a parte da imagem
         image_part = None
         for part in data["candidates"][0]["content"]["parts"]:
             if "inlineData" in part:
@@ -134,13 +137,18 @@ def generate_logo_image(produto, vibe, api_key):
                 break
         
         if image_part:
-            return image_part["inlineData"]["data"] # Retorna a imagem em base64
+            return image_part["inlineData"]["data"] 
         else:
             st.error("A API não retornou dados de imagem, embora a chamada tenha sido bem-sucedida.")
             return None
         
     except requests.exceptions.RequestException as e:
-        st.error(f"Erro de rede ou HTTP ao chamar a API de imagem: {e}")
+        # **MELHORIA:** Detetar especificamente o erro 429 (Too Many Requests)
+        if e.response is not None and e.response.status_code == 429:
+            st.error("Erro: Muitas requisições enviadas à API de imagem.")
+            st.warning("Por favor, aguarde alguns minutos antes de tentar novamente.")
+        else:
+            st.error(f"Erro de rede ou HTTP ao chamar a API de imagem: {e}")
         return None
     except KeyError:
         st.error("Resposta da API de imagem em formato inesperado. Verifique os logs.")
@@ -168,7 +176,7 @@ with st.form("brand_form"):
         "Qual é a 'vibe' ou estilo da marca?",
         [
             "Moderno e Minimalista",
-            "Rústico e Aconchegante",
+            "Rústico e Aconchete",
             "Divertido e Jovem",
             "Elegante e Premium",
             "Tecnológico e Inovador"
@@ -208,4 +216,4 @@ if submitted:
             st.error("Não foi possível gerar o conceito da marca.")
 
 st.divider()
-st.caption("Um projeto de exemplo com Python, Streamlit, Gemini (texto) e Imagen (imagem).")
+st.caption("Um projeto de exemplo com Python, Streamlit, Gemini (texto) e Imagem.")
