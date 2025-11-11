@@ -84,16 +84,28 @@ def generate_brand_text(produto, vibe, api_key):
 
 def generate_logo_image(produto, vibe, api_key):
     """
-    Chama a API do Imagen 4.0 para gerar um conceito de logo.
+    Chama a API do Gemini 2.5 Flash Image Preview para gerar um conceito de logo.
+    Esta função foi MODIFICADA para usar um modelo compatível com a API do AI Studio.
     """
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key={api_key}"
+    # Usamos o endpoint generateContent do modelo de imagem
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key={api_key}"
     
-    # Prompt otimizado para geração de logo
     logo_prompt = f"Um logo vetorial profissional, design limpo, {vibe}, para uma marca de '{produto}'. Fundo branco."
 
     payload = {
-        "instances": [{"prompt": logo_prompt}],
-        "parameters": {"sampleCount": 1}
+        "contents": [{
+            "parts": [{"text": logo_prompt}]
+        }],
+        "generationConfig": {
+            "responseModalities": ['IMAGE'] # Pedimos uma imagem como resposta
+        },
+        # Mantemos as configurações de segurança permissivas
+        "safetySettings": [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+        ]
     }
     
     headers = {'Content-Type': 'application/json'}
@@ -103,13 +115,29 @@ def generate_logo_image(produto, vibe, api_key):
         response.raise_for_status()
         
         data = response.json()
-        
-        if "predictions" not in data or not data["predictions"]:
-            st.error("A API de imagem não retornou predições.")
+
+        # A estrutura da resposta é diferente
+        if "candidates" not in data or not data["candidates"]:
+            st.error("A API de imagem não retornou candidatos.")
             return None
 
-        # Retorna a imagem em base64
-        return data["predictions"][0]["bytesBase64Encoded"]
+        # Verificação de segurança
+        if data["candidates"][0].get("finishReason") == "SAFETY":
+            st.error("A resposta da imagem foi bloqueada pelo filtro de segurança da IA. Tente um prompt diferente.")
+            return None
+        
+        # Encontrar a parte da imagem
+        image_part = None
+        for part in data["candidates"][0]["content"]["parts"]:
+            if "inlineData" in part:
+                image_part = part
+                break
+        
+        if image_part:
+            return image_part["inlineData"]["data"] # Retorna a imagem em base64
+        else:
+            st.error("A API não retornou dados de imagem, embora a chamada tenha sido bem-sucedida.")
+            return None
         
     except requests.exceptions.RequestException as e:
         st.error(f"Erro de rede ou HTTP ao chamar a API de imagem: {e}")
